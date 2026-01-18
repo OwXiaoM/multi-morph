@@ -103,7 +103,7 @@ def build_atlas(model:torch.nn.Module, dataset:Dataset,
     img_size = dataset._get_img_size()
     
     # create the 3D warp layer to warp images
-    warp_layer = layers.group.Warp3d(img_size)
+    warp_layer = layers.group.Warp3d(img_size).to(device)
     
     model.eval()  # set the model to evaluation mode
     with torch.no_grad():
@@ -158,7 +158,7 @@ def wrapper_build_atlas(model_path, atlas_save_path, csv_path, img_header_name, 
     '''
     
     # get the device. Currently on supports CPU
-    device = torch.device('cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     # load the CSV file with image paths
     csv_data = pd.read_csv(csv_path)
@@ -171,21 +171,29 @@ def wrapper_build_atlas(model_path, atlas_save_path, csv_path, img_header_name, 
                                    segmentations=segmentations, file_names=None, segmentation_to_one_hot=False,
                                    transform=PadtoDivisible())
     # get the image size
+    # get the image size
     img_size = dataset._get_img_size()
-    print(f"Image size: {img_size}")
+    print(f"Original Image size: {img_size}")
+
+    # --- 新增修复代码 Start ---
+    # 计算 PadtoDivisible (默认 divisor=16) 填充后的尺寸
+    # 模型必须使用填充后的尺寸初始化，否则会报错 "tensor size mismatch"
+    divisor = 16
+    img_size = [s + (divisor - s % divisor) % divisor for s in img_size]
+    print(f"Padded Image size for Model: {img_size}")
+    # --- 新增修复代码 End ---
     
     # get the model
-    mmnet = load_model(model_path, img_size)
-    mmnet = mmnet.to(device)
+    mmnet = load_model(model_path, img_size).to(device)
     
 
     # build the atlas
     atlas, atlas_segmentation = build_atlas(mmnet, dataset, device)
     
     # save the atlases
-    nib.save(nib.Nifti1Image(atlas.squeeze().numpy(), np.eye(4)), os.path.join(atlas_save_path, 'atlas.nii.gz'))
+    nib.save(nib.Nifti1Image(atlas.detach().cpu().squeeze().numpy(), np.eye(4)), os.path.join(atlas_save_path, 'atlas.nii.gz'))
     if atlas_segmentation is not None:
-        nib.save(nib.Nifti1Image(atlas_segmentation.squeeze().numpy(), np.eye(4)), os.path.join(atlas_save_path, 'atlas_segmentation.nii.gz'))
+        nib.save(nib.Nifti1Image(atlas_segmentation.detach().cpu().squeeze().numpy(), np.eye(4)), os.path.join(atlas_save_path, 'atlas_segmentation.nii.gz'))
     
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description='Build atlas by inference on a pre-trained model')

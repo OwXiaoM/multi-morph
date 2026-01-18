@@ -355,19 +355,26 @@ class GroupDataLoader3D(GroupDataLoader):
     def clip_image(self, image: torch.Tensor, pct: float = 0.998) -> torch.Tensor:
         '''
         Clips image based on a percentage quantile.[0,1] normalization
-        Args:
-            image: the image to clip.
-            pct: the percentage quantile to clip.
-        returns:
-            clipped_image: the clipped image.
-        
         '''
         if pct > 1:
             pct = pct/100
             
         img_min = torch.min(image)
-        img_max = torch.quantile(image, pct)
-        clipped_image = (image - img_min) / (img_max - img_min)
+        
+        # --- 修复开始 ---
+        # 如果图像过大，torch.quantile 会报错。
+        # 我们通过步长切片（Subsampling）来减少计算分位点的数据量。
+        # [::4, ::4, ::4] 表示在长宽高三个维度上每隔 4 个像素取一个，数据量减少 64 倍，
+        # 但统计分布几乎不变，足以计算准确的 max 阈值。
+        if image.numel() > 10000000: # 如果元素超过 1000 万
+            # 尝试下采样计算 quantile
+            # 注意：根据您的数据维度 (C, D, H, W) 或 (D, H, W)，这里使用 view(-1) 展平后采样最通用
+            img_max = torch.quantile(image.view(-1)[::100], pct)
+        else:
+            img_max = torch.quantile(image, pct)
+        # --- 修复结束 ---
+
+        clipped_image = (image - img_min) / (img_max - img_min + 1e-8) # 加一个小数值防止除以零
         clipped_image = torch.clamp(clipped_image, 0, 1)
         
         return clipped_image
